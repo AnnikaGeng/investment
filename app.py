@@ -34,19 +34,14 @@ st.caption(f"📊 数据最后更新：{pd.Timestamp.now().strftime('%Y年%m月%
 # 2. 获取数据
 benchmark = "SPY"
 tickers = list(etf_info.keys()) + [benchmark]
-# 收集所有成分股用于分析
-all_stocks = []
-for info in etf_info.values():
-    all_stocks.extend(info['stocks'])
-all_stocks = list(set(all_stocks))  # 去重
 
 @st.cache_data(ttl=86400) # 缓存24小时（当天）
-def load_data(ticker_list, stock_list):
-    data = yf.download(ticker_list + stock_list, period="1y")['Close']
+def load_data(ticker_list):
+    data = yf.download(ticker_list, period="1y", progress=False)['Close']
     return data
 
 try:
-    df = load_data(tickers, all_stocks)
+    df = load_data(tickers)
     
     # 3. 计算排名与位次变动（带缓存）
     @st.cache_data(ttl=86400)
@@ -55,7 +50,7 @@ try:
         for ticker in etf_info.keys():
             # 相对强弱逻辑：(ETF / SPY) 的 20 日变化率
             rel_strength = df_data[ticker] / df_data[benchmark]
-            rotation_series = (rel_strength.pct_change(20) * 100).dropna()
+            rotation_series = (rel_strength.pct_change(20, fill_method=None) * 100).dropna()
             latest_val = rotation_series.iloc[-1]
             
             rotation_results.append({
@@ -73,7 +68,7 @@ try:
         
         for ticker in etf_info.keys():
             rel_strength = df_data[ticker] / df_data[benchmark]
-            rotation_series = (rel_strength.pct_change(20) * 100).dropna()
+            rotation_series = (rel_strength.pct_change(20, fill_method=None) * 100).dropna()
             # 取前一天的值
             if len(rotation_series) >= 2:
                 yesterday_val = rotation_series.iloc[-2]
@@ -129,51 +124,6 @@ try:
             
             # 显示主要成分说明
             st.caption(f"主要成分: {', '.join(etf_info[ticker]['stocks'][:5])}")
-            
-            # 成分股表现监控与PE分析（可展开）
-            with st.expander(f"📈 {ticker} 领涨个股及估值分析"):
-                stock_list = etf_info[ticker]['stocks']
-                stock_details = []
-                
-                for s in stock_list:
-                    if s in df.columns:
-                        # 获取价格动能
-                        week_change = (df[s].iloc[-1] / df[s].iloc[-5] - 1) * 100 if len(df) >= 5 else 0
-                        current_price = df[s].iloc[-1]
-                        
-                        # 获取 PE 数据 (使用 yfinance 的 Ticker 对象)
-                        try:
-                            s_ticker = yf.Ticker(s)
-                            pe = s_ticker.info.get('trailingPE', "N/A")  # 获取滚动市盈率
-                            market_cap = s_ticker.info.get('marketCap', 0) / 1e9  # 转换成 B (十亿)
-                        except:
-                            pe = "N/A"
-                            market_cap = "N/A"
-                        
-                        stock_details.append({
-                            "代码": s,
-                            "周涨幅%": round(week_change, 2),
-                            "当前价格": round(current_price, 2),
-                            "PE (TTM)": pe,
-                            "市值 (B)": round(market_cap, 2) if market_cap != "N/A" else "N/A"
-                        })
-                
-                if stock_details:
-                    # 转换为 DataFrame 并排序
-                    details_df = pd.DataFrame(stock_details).sort_values("周涨幅%", ascending=False)
-                    
-                    # 使用 Streamlit 的表格增强显示
-                    st.dataframe(
-                        details_df,
-                        hide_index=True,
-                        column_config={
-                            "PE (TTM)": st.column_config.NumberColumn("PE (TTM)", help="滚动市盈率，越高代表估值越高"),
-                            "周涨幅%": st.column_config.NumberColumn("周涨幅%", format="%.2f%%", help="周涨跌幅：正数表示上涨，负数表示下跌")
-                        },
-                        use_container_width=True
-                    )
-                else:
-                    st.info("成分股数据暂无")
             
             st.divider()
 
