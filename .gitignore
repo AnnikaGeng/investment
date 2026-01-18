@@ -1,0 +1,25 @@
+# Python virtual environment
+bin/
+lib/
+include/
+pyvenv.cfg
+
+# Streamlit cache
+.streamlit/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+.env
