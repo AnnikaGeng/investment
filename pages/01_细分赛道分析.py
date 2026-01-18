@@ -45,7 +45,7 @@ etf_data_map = {
 }
 
 # --- 1. 数据加载与缓存 ---
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=86400)
 def get_market_data(tickers):
     # 增加抓取天数以支持位次变动计算
     return yf.download(tickers, period="60d")['Close']
@@ -76,6 +76,7 @@ yest_rank_map, _ = get_daily_rankings(-2)
 
 # --- 3. UI 渲染 ---
 st.title("🎯 专业细分赛道指挥部")
+st.caption(f"📊 数据最后更新：{pd.Timestamp.now().strftime('%Y年%m月%d日 %H:%M:%S')} (当天缓存，同日内无需重新加载)")
 
 cols = st.columns(2) # 细分赛道较多，用 2 列排列更清晰
 

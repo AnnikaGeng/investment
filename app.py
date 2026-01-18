@@ -28,6 +28,8 @@ etf_info = {
 
 st.title("📊 全球板块资金流向全景图 (按强度排序)")
 st.markdown("计算说明：显示各板块相对于 SPY 的 20 日动能变化 (Capital Rotation Rel) + 成分股表现分析")
+st.caption(f"📊 数据最后更新：{pd.Timestamp.now().strftime('%Y年%m月%d日 %H:%M:%S')} (当天缓存，同日内无需重新加载)")
+
 
 # 2. 获取数据
 benchmark = "SPY"
@@ -38,7 +40,7 @@ for info in etf_info.values():
     all_stocks.extend(info['stocks'])
 all_stocks = list(set(all_stocks))  # 去重
 
-@st.cache_data(ttl=3600) # 缓存1小时
+@st.cache_data(ttl=86400) # 缓存24小时（当天）
 def load_data(ticker_list, stock_list):
     data = yf.download(ticker_list + stock_list, period="1y")['Close']
     return data
@@ -47,7 +49,7 @@ try:
     df = load_data(tickers, all_stocks)
     
     # 3. 计算排名与位次变动（带缓存）
-    @st.cache_data(ttl=3600)
+    @st.cache_data(ttl=86400)
     def calculate_rankings(df_data):
         rotation_results = []
         for ticker in etf_info.keys():
