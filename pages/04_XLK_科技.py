@@ -110,28 +110,41 @@ if df_etf is not None and ETF_CODE in df_etf.columns:
         rs = df_etf[ETF_CODE] / df_etf[BENCHMARK]
         rs_momentum = rs.pct_change(20, fill_method=None) * 100
 
-        # 根据时间段选择采样点数（7-10个点）
-        num_points = min(10, max(7, selected_period // 10))
+        # 移除NaN值
+        valid_data = pd.DataFrame({
+            'rs': rs,
+            'momentum': rs_momentum
+        }).dropna()
 
-        # 获取最近N天的数据
-        total_days = min(selected_period, len(rs))
-        step = max(1, total_days // num_points)
+        if len(valid_data) < 2:
+            st.warning(f"数据不足，无法生成RRG图表（需要至少2个有效数据点）")
+        else:
+            # 根据时间段选择采样点数（7-10个点）
+            num_points = min(10, max(7, selected_period // 10))
 
-        # 采样数据点
-        indices = list(range(-total_days, 0, step)) + [-1]  # 确保包含最新的点
-        indices = sorted(list(set(indices)))  # 去重并排序
+            # 获取最近N天的有效数据
+            total_days = min(selected_period, len(valid_data))
+            step = max(1, total_days // num_points)
 
-        x_vals = rs_momentum.iloc[indices].values
-        y_vals = rs.iloc[indices].values
+            # 采样数据点 - 使用正向索引避免越界
+            sample_indices = list(range(len(valid_data) - total_days, len(valid_data), step))
+            # 确保包含最新的点
+            if sample_indices[-1] != len(valid_data) - 1:
+                sample_indices.append(len(valid_data) - 1)
 
-        # 归一化Y轴
-        y_min, y_max = rs.iloc[-max(60, total_days):].min(), rs.iloc[-max(60, total_days):].max()
-        y_normalized = ((y_vals - y_min) / (y_max - y_min) * 100) if y_max != y_min else [50] * len(y_vals)
+            x_vals = valid_data['momentum'].iloc[sample_indices].values
+            y_vals = valid_data['rs'].iloc[sample_indices].values
 
-        fig_rrg = go.Figure()
+            # 归一化Y轴 - 使用有效数据计算范围
+            normalization_range = min(max(60, total_days), len(valid_data))
+            y_min = valid_data['rs'].iloc[-normalization_range:].min()
+            y_max = valid_data['rs'].iloc[-normalization_range:].max()
+            y_normalized = ((y_vals - y_min) / (y_max - y_min) * 100) if y_max != y_min else [50] * len(y_vals)
 
-        # 添加平滑轨迹线
-        fig_rrg.add_trace(go.Scatter(
+            fig_rrg = go.Figure()
+
+            # 添加平滑轨迹线
+            fig_rrg.add_trace(go.Scatter(
             x=x_vals,
             y=y_normalized,
             mode='lines+markers',
@@ -139,10 +152,10 @@ if df_etf is not None and ETF_CODE in df_etf.columns:
             line=dict(color='#1f77b4', width=3, shape='spline', smoothing=1.3),
             marker=dict(size=8, color=y_normalized, colorscale='Viridis', showscale=False,
                        line=dict(width=1, color='white'))
-        ))
+            ))
 
-        # 标注最新点
-        fig_rrg.add_trace(go.Scatter(
+            # 标注最新点
+            fig_rrg.add_trace(go.Scatter(
             x=[x_vals[-1]],
             y=[y_normalized[-1]],
             mode='markers+text',
@@ -151,11 +164,11 @@ if df_etf is not None and ETF_CODE in df_etf.columns:
             text=['NOW'],
             textposition='top center',
             textfont=dict(size=12, color='red', family='Arial Black')
-        ))
+            ))
 
-        # 标注起始点
-        period_name = f"{selected_period}天前"
-        fig_rrg.add_trace(go.Scatter(
+            # 标注起始点
+            period_name = f"{selected_period}天前"
+            fig_rrg.add_trace(go.Scatter(
             x=[x_vals[0]],
             y=[y_normalized[0]],
             mode='markers+text',
@@ -164,55 +177,55 @@ if df_etf is not None and ETF_CODE in df_etf.columns:
             text=['START'],
             textposition='bottom center',
             textfont=dict(size=11, color='gray')
-        ))
+            ))
 
-        # 添加象限分割线
-        fig_rrg.add_hline(y=50, line_dash="dash", line_color="gray", opacity=0.5, line_width=2)
-        fig_rrg.add_vline(x=0, line_dash="dash", line_color="gray", opacity=0.5, line_width=2)
+            # 添加象限分割线
+            fig_rrg.add_hline(y=50, line_dash="dash", line_color="gray", opacity=0.5, line_width=2)
+            fig_rrg.add_vline(x=0, line_dash="dash", line_color="gray", opacity=0.5, line_width=2)
 
-        # 动态计算坐标轴范围
-        x_range = max(x_vals) - min(x_vals)
-        x_padding = max(x_range * 0.15, 2)  # 至少2个单位的padding
-        x_min_plot = min(x_vals) - x_padding
-        x_max_plot = max(x_vals) + x_padding
+            # 动态计算坐标轴范围
+            x_range = max(x_vals) - min(x_vals)
+            x_padding = max(x_range * 0.15, 2)  # 至少2个单位的padding
+            x_min_plot = min(x_vals) - x_padding
+            x_max_plot = max(x_vals) + x_padding
 
-        # 确保坐标轴包含0点
-        x_min_plot = min(x_min_plot, -x_padding)
-        x_max_plot = max(x_max_plot, x_padding)
+            # 确保坐标轴包含0点
+            x_min_plot = min(x_min_plot, -x_padding)
+            x_max_plot = max(x_max_plot, x_padding)
 
-        y_min_val, y_max_val = 0, 100
+            y_min_val, y_max_val = 0, 100
 
-        # 添加象限背景
-        fig_rrg.add_shape(type="rect", x0=0, y0=50, x1=x_max_plot, y1=y_max_val,
+            # 添加象限背景
+            fig_rrg.add_shape(type="rect", x0=0, y0=50, x1=x_max_plot, y1=y_max_val,
                          fillcolor="lightgreen", opacity=0.15, line_width=0, layer="below")
-        fig_rrg.add_shape(type="rect", x0=x_min_plot, y0=50, x1=0, y1=y_max_val,
+            fig_rrg.add_shape(type="rect", x0=x_min_plot, y0=50, x1=0, y1=y_max_val,
                          fillcolor="lightblue", opacity=0.15, line_width=0, layer="below")
-        fig_rrg.add_shape(type="rect", x0=x_min_plot, y0=y_min_val, x1=0, y1=50,
+            fig_rrg.add_shape(type="rect", x0=x_min_plot, y0=y_min_val, x1=0, y1=50,
                          fillcolor="lightyellow", opacity=0.25, line_width=0, layer="below")
-        fig_rrg.add_shape(type="rect", x0=0, y0=y_min_val, x1=x_max_plot, y1=50,
+            fig_rrg.add_shape(type="rect", x0=0, y0=y_min_val, x1=x_max_plot, y1=50,
                          fillcolor="lightcoral", opacity=0.15, line_width=0, layer="below")
 
-        # 象限标签 - 基于实际坐标轴范围计算位置
-        # 右侧标签位置（正值区域的中点）
-        x_right_label = x_max_plot * 0.5
-        # 左侧标签位置（负值区域的中点）
-        x_left_label = x_min_plot * 0.5
+            # 象限标签 - 基于实际坐标轴范围计算位置
+            # 右侧标签位置（正值区域的中点）
+            x_right_label = x_max_plot * 0.5
+            # 左侧标签位置（负值区域的中点）
+            x_left_label = x_min_plot * 0.5
 
-        fig_rrg.add_annotation(x=x_right_label, y=75, text="<b>Leading</b><br>强势",
+            fig_rrg.add_annotation(x=x_right_label, y=75, text="<b>Leading</b><br>强势",
                              showarrow=False, font=dict(size=14, color="green"), opacity=0.7)
-        fig_rrg.add_annotation(x=x_left_label, y=75, text="<b>Improving</b><br>改善",
+            fig_rrg.add_annotation(x=x_left_label, y=75, text="<b>Improving</b><br>改善",
                              showarrow=False, font=dict(size=14, color="blue"), opacity=0.7)
-        fig_rrg.add_annotation(x=x_left_label, y=25, text="<b>Lagging</b><br>滞后",
+            fig_rrg.add_annotation(x=x_left_label, y=25, text="<b>Lagging</b><br>滞后",
                              showarrow=False, font=dict(size=14, color="orange"), opacity=0.7)
-        fig_rrg.add_annotation(x=x_right_label, y=25, text="<b>Weakening</b><br>转弱",
+            fig_rrg.add_annotation(x=x_right_label, y=25, text="<b>Weakening</b><br>转弱",
                              showarrow=False, font=dict(size=14, color="red"), opacity=0.7)
 
-        # 设置坐标轴范围
-        fig_rrg.update_xaxes(range=[x_min_plot, x_max_plot])
-        fig_rrg.update_yaxes(range=[y_min_val, y_max_val])
+            # 设置坐标轴范围
+            fig_rrg.update_xaxes(range=[x_min_plot, x_max_plot])
+            fig_rrg.update_yaxes(range=[y_min_val, y_max_val])
 
-        fig_rrg.update_layout(
-            title=f"{ETF_CODE} RRG 轮动图 ({selected_period}天轨迹 - {len(indices)}个采样点)",
+            fig_rrg.update_layout(
+            title=f"{ETF_CODE} RRG 轮动图 ({selected_period}天轨迹 - {len(sample_indices)}个采样点)",
             xaxis_title="动量 (Momentum)",
             yaxis_title="相对强度 (Relative Strength)",
             height=500,
@@ -221,9 +234,9 @@ if df_etf is not None and ETF_CODE in df_etf.columns:
             template="plotly_white",
             showlegend=True,
             font=dict(size=12)
-        )
+            )
 
-        st.plotly_chart(fig_rrg, use_container_width=True)
+            st.plotly_chart(fig_rrg, use_container_width=True)
 
         st.info("""
         **RRG 四象限解释：**

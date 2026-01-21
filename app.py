@@ -26,7 +26,7 @@ etf_info = {
     "ARKX": {"name": "航天太空 (Space)", "stocks": ["RKLB", "LMT", "AVAV", "IRDM", "NOC", "RTX", "VSAT", "SPCE", "AXL", "MAXR"]}
 }
 
-st.title("📊 全球板块资金流向全景图 (按强度排序)")
+st.title("📊 全球板块资金流向图")
 st.markdown("计算说明：显示各板块相对于 SPY 的 20 日动能变化 (Capital Rotation Rel) + 成分股表现分析")
 st.caption(f"📊 数据最后更新：{pd.Timestamp.now().strftime('%Y年%m月%d日 %H:%M:%S')} (当天缓存，同日内无需重新加载)")
 
