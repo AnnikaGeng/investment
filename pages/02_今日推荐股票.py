@@ -161,8 +161,8 @@ def load_sector_data(etf_list, period_days=100):
         return None
 
 @st.cache_data(ttl=3600)
-def load_stock_data(stock_list, period="6mo"):
-    """加载股票数据"""
+def load_stock_data(stock_list, period="1y"):
+    """加载股票数据 - 使用1年数据以支持MA100计算"""
     try:
         data = yf.download(stock_list, period=period, progress=False)
         return data
@@ -171,40 +171,40 @@ def load_stock_data(stock_list, period="6mo"):
         return None
 
 def calculate_moving_average_score(stock_data, ticker):
-    """计算均线分析得分"""
+    """计算均线分析得分 - 使用MA30/MA50/MA100"""
     try:
         if isinstance(stock_data['Close'].columns, pd.Index) and ticker in stock_data['Close'].columns:
             close_prices = stock_data['Close'][ticker].dropna()
         else:
             close_prices = stock_data['Close'].dropna()
 
-        if len(close_prices) < 200:
+        if len(close_prices) < 100:
             return 0, "数据不足"
 
         current_price = close_prices.iloc[-1]
-        ma20 = close_prices.iloc[-20:].mean()
+        ma30 = close_prices.iloc[-30:].mean()
         ma50 = close_prices.iloc[-50:].mean()
-        ma200 = close_prices.iloc[-200:].mean()
+        ma100 = close_prices.iloc[-100:].mean()
 
         score = 0
         signals = []
 
         # 价格在所有均线上方 (30分)
-        if current_price > ma20 and current_price > ma50 and current_price > ma200:
+        if current_price > ma30 and current_price > ma50 and current_price > ma100:
             score += 30
             signals.append("多头排列")
-        elif current_price > ma20 and current_price > ma50:
+        elif current_price > ma30 and current_price > ma50:
             score += 20
             signals.append("短期强势")
-        elif current_price > ma20:
+        elif current_price > ma30:
             score += 10
-            signals.append("突破短期均线")
+            signals.append("突破MA30")
 
         # 均线多头排列 (20分)
-        if ma20 > ma50 > ma200:
+        if ma30 > ma50 > ma100:
             score += 20
             signals.append("均线多头")
-        elif ma20 > ma50:
+        elif ma30 > ma50:
             score += 10
 
         return score, ", ".join(signals) if signals else "中性"
@@ -212,7 +212,7 @@ def calculate_moving_average_score(stock_data, ticker):
         return 0, f"计算错误: {str(e)}"
 
 def calculate_price_action_score(stock_data, ticker):
-    """计算价格行为得分"""
+    """计算价格行为得分 - 识别健康回调买点"""
     try:
         if isinstance(stock_data['Close'].columns, pd.Index) and ticker in stock_data['Close'].columns:
             close_prices = stock_data['Close'][ticker].dropna()
@@ -221,47 +221,97 @@ def calculate_price_action_score(stock_data, ticker):
             close_prices = stock_data['Close'].dropna()
             volume_data = stock_data['Volume'].dropna() if 'Volume' in stock_data else None
 
-        if len(close_prices) < 60:
+        if len(close_prices) < 100:
             return 0, "数据不足"
 
+        current_price = close_prices.iloc[-1]
         score = 0
         signals = []
 
-        # 20日动能 (25分)
-        momentum_20 = (close_prices.iloc[-1] / close_prices.iloc[-20] - 1) * 100
-        if momentum_20 > 10:
-            score += 25
-            signals.append(f"强势上涨{momentum_20:.1f}%")
-        elif momentum_20 > 5:
+        # 1. RSI分析 (15分) - 避免超买区域
+        def calculate_rsi(prices, period=14):
+            delta = prices.diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+            rs = gain / loss
+            rsi = 100 - (100 / (1 + rs))
+            return rsi
+
+        rsi = calculate_rsi(close_prices)
+        current_rsi = rsi.iloc[-1] if not pd.isna(rsi.iloc[-1]) else 50
+
+        if 40 <= current_rsi <= 60:
             score += 15
-            signals.append(f"稳定上涨{momentum_20:.1f}%")
-        elif momentum_20 > 0:
+            signals.append(f"RSI健康 {current_rsi:.1f}")
+        elif 30 <= current_rsi < 40 or 60 < current_rsi <= 70:
+            score += 10
+            signals.append(f"RSI可接受 {current_rsi:.1f}")
+        elif current_rsi > 80:
+            score += 0
+            signals.append(f"RSI超买 {current_rsi:.1f} ⚠️")
+        elif current_rsi < 30:
             score += 5
-            signals.append(f"小幅上涨{momentum_20:.1f}%")
+            signals.append(f"RSI超卖 {current_rsi:.1f}")
 
-        # 相对强度位置 (15分)
-        rs_60d = close_prices.iloc[-60:]
-        rs_min = rs_60d.min()
-        rs_max = rs_60d.max()
-        if rs_max != rs_min:
-            rs_percentile = (close_prices.iloc[-1] - rs_min) / (rs_max - rs_min) * 100
-            if rs_percentile > 80:
-                score += 15
-                signals.append("接近高点")
-            elif rs_percentile > 60:
-                score += 10
-            elif rs_percentile > 40:
-                score += 5
+        # 2. 距离均线分析 (20分) - 寻找回踩买点
+        ma30 = close_prices.iloc[-30:].mean()
+        ma50 = close_prices.iloc[-50:].mean()
 
-        # 成交量确认 (10分)
+        dist_to_ma30 = ((current_price - ma30) / ma30) * 100
+        dist_to_ma50 = ((current_price - ma50) / ma50) * 100
+
+        # 接近MA30 (±2%)
+        if -2 <= dist_to_ma30 <= 2:
+            score += 20
+            signals.append(f"回踩MA30 {dist_to_ma30:+.1f}%")
+        # 接近MA50 (±2-5%)
+        elif -5 <= dist_to_ma50 <= 5:
+            score += 15
+            signals.append(f"回踩MA50 {dist_to_ma50:+.1f}%")
+        # 远离均线 (>10%) - 不追高
+        elif dist_to_ma30 > 10 or dist_to_ma50 > 10:
+            score += 0
+            signals.append(f"远离均线 ⚠️")
+        # 在均线之间
+        elif 2 < dist_to_ma30 <= 10:
+            score += 10
+            signals.append(f"MA30上方 {dist_to_ma30:+.1f}%")
+
+        # 3. 短期走势 (10分) - 避免急涨
+        momentum_5d = (close_prices.iloc[-1] / close_prices.iloc[-5] - 1) * 100
+
+        if 0 <= momentum_5d <= 3:
+            score += 10
+            signals.append(f"温和上涨 {momentum_5d:+.1f}%")
+        elif -3 <= momentum_5d < 0:
+            score += 8
+            signals.append(f"健康回调 {momentum_5d:+.1f}%")
+        elif momentum_5d > 5:
+            score += 5
+            signals.append(f"涨幅过大 {momentum_5d:+.1f}% ⚠️")
+        elif 3 < momentum_5d <= 5:
+            score += 7
+            signals.append(f"较强上涨 {momentum_5d:+.1f}%")
+
+        # 4. 成交量分析 (5分) - 回调缩量为佳
         if volume_data is not None and len(volume_data) >= 20:
-            avg_volume = volume_data.iloc[-20:].mean()
+            avg_volume_20 = volume_data.iloc[-20:-5].mean()
             recent_volume = volume_data.iloc[-5:].mean()
-            if recent_volume > avg_volume * 1.2:
-                score += 10
-                signals.append("成交量放大")
-            elif recent_volume > avg_volume:
+
+            volume_change = (recent_volume / avg_volume_20 - 1) * 100
+
+            # 回调期间成交量减少 (理想)
+            if -20 <= volume_change <= 0 and momentum_5d < 0:
                 score += 5
+                signals.append("回调缩量 ✓")
+            # 上涨期间成交量温和放大
+            elif 0 < volume_change <= 30 and momentum_5d > 0:
+                score += 3
+                signals.append("量价配合")
+            # 成交量异常放大
+            elif volume_change > 50:
+                score += 0
+                signals.append("成交量异常 ⚠️")
 
         return score, ", ".join(signals) if signals else "中性"
     except Exception as e:
@@ -520,7 +570,7 @@ if df_sectors is not None and 'SPY' in df_sectors.columns:
 
                 2. **均线分析 (50分)**
                    - 价格在所有均线上方 (多头排列): 30分
-                   - 均线多头排列 (MA20 > MA50 > MA200): 20分
+                   - 均线多头排列 (MA30 > MA50 > MA100): 20分
                    - 部分满足条件: 10-20分
 
                 3. **价格行为 (50分)**
