@@ -140,224 +140,129 @@ ETF_CHINESE_NAMES = {
     "GNOM": "基因组",
 }
 
-st.title("🏆 Top 10 热门赛道深度分析")
-st.caption("自动追踪表现最强的10个细分赛道，展示资金流向和龙头股表现")
+# --- 1. 数据加载与缓存 ---
+@st.cache_data(ttl=86400)
+def get_market_data(tickers):
+    # 增加抓取天数以支持位次变动计算
+    return yf.download(tickers, period="60d")['Close']
 
-# 时间段选择
-period_option = st.radio(
-    "选择分析周期：",
-    options=[5, 10, 20],
-    format_func=lambda x: f"{x}日",
-    horizontal=True,
-    index=2  # 默认20日
-)
+# 获取所有需要的代码
+all_stocks = [s for info in etf_data_map.values() for s in info['stocks']]
+all_benchmarks = [info['benchmark'] for info in etf_data_map.values()]
+spy_benchmark = ["SPY"]
+data = get_market_data(list(set(all_stocks + all_benchmarks + spy_benchmark)))
 
-# 加载所有ETF数据
-@st.cache_data(ttl=3600)
-def load_all_etf_data(period_days=100):
-    """加载所有ETF数据"""
-    try:
-        etf_list = list(SECTOR_ETF_STOCKS.keys())
-        tickers = etf_list + ["SPY"]
-        data = yf.download(tickers, period=f"{period_days}d", progress=False)
+# --- 2. 核心计算逻辑 ---
+def get_daily_rankings(day_offset):
+    # 计算某一天的板块相对强度排名
+    ranks = []
+    for key, info in etf_data_map.items():
+        # 相对 SPY 的 20 日动能
+        bm = info['benchmark']
+        rel_strength = data[bm].iloc[day_offset] / data[bm].iloc[day_offset - 20]
+        ranks.append({"key": key, "val": (rel_strength - 1) * 100})
+    
+    # 排序
+    sorted_list = sorted(ranks, key=lambda x: x['val'], reverse=True)
+    return {item['key']: i + 1 for i, item in enumerate(sorted_list)}, sorted_list
 
-        if isinstance(data.columns, pd.MultiIndex):
-            close_data = data['Close']
-        else:
-            close_data = data[['Close']]
+# 获取今日、昨日排名
+curr_rank_map, curr_list = get_daily_rankings(-1)
+yest_rank_map, _ = get_daily_rankings(-2)
 
-        return close_data
-    except Exception as e:
-        st.error(f"数据加载失败: {e}")
-        return None
+# --- 3. UI 渲染 ---
+st.title("🎯 专业细分赛道指挥部")
+st.caption(f"📊 数据最后更新：{pd.Timestamp.now().strftime('%Y年%m月%d日 %H:%M:%S')} (当天缓存，同日内无需重新加载)")
 
-# 加载个股数据
-@st.cache_data(ttl=3600)
-def load_stock_data(stock_list, period_days=60):
-    """加载个股数据"""
-    try:
-        data = yf.download(stock_list, period=f"{period_days}d", progress=False)
+cols = st.columns(2) # 细分赛道较多，用 2 列排列更清晰
 
-        if isinstance(data.columns, pd.MultiIndex):
-            close_data = data['Close']
-        else:
-            close_data = data[['Close']]
+for i, item in enumerate(curr_list):
+    key = item['key']
+    info = etf_data_map[key]
+    val = item['val']
+    
+    # 计算排名升降
+    rank_diff = yest_rank_map[key] - curr_rank_map[key]
+    diff_icon = f"🚀 +{rank_diff}" if rank_diff > 0 else (f"🔻 {rank_diff}" if rank_diff < 0 else "➖")
+    
+    with cols[i % 2]:
+        with st.container(border=True):
+            # 头部信息
+            st.subheader(f"{info['name']} ({key})")
+            st.write(f"排名：第 **{curr_rank_map[key]}** 名 ({diff_icon}) | 强度：{val:.2f}%")
+            
+            # 个股分析表格
+            stock_data = []
+            for stock in info['stocks']:
+                if stock in data.columns:
+                    week_change = (data[stock].iloc[-1] / data[stock].iloc[-5] - 1) * 100 if len(data) >= 5 else 0
+                    stock_data.append({
+                        "代码": stock,
+                        "周涨幅%": round(week_change, 2),
+                        "价格": round(data[stock].iloc[-1], 2)
+                    })
+            
+            st.divider()
+            
+            # 计算该板块的资金流向 (相对强度)
+            bm = info['benchmark']
+            if bm in data.columns and "SPY" in data.columns:
+                rel_strength = data[bm] / data["SPY"]
+                rotation_series = (rel_strength.pct_change(20) * 100).dropna().tail(60)
+            else:
+                rotation_series = None
+            
+            if rotation_series is not None and len(rotation_series) > 0:
+                fig = go.Figure()
+                # 添加红绿柱
+                fig.add_trace(go.Bar(
+                    x=rotation_series.index,
+                    y=rotation_series,
+                    marker_color=['#26a69a' if x > 0 else '#ef5350' for x in rotation_series],
+                    name="资金流向"
+                ))
+                # 添加趋势折线
+                fig.add_trace(go.Scatter(
+                    x=rotation_series.index,
+                    y=rotation_series,
+                    line=dict(color='gray', width=1),
+                    mode='lines',
+                    showlegend=False
+                ))
+                
+                fig.update_layout(
+                    height=200, 
+                    margin=dict(l=0, r=0, t=10, b=0),
+                    template="plotly_white",
+                    xaxis_visible=False # 隐藏 X 轴保持紧凑
+                )
+                st.plotly_chart(fig, width='stretch', config={'displayModeBar': False})
 
-        return close_data
-    except Exception as e:
-        return None
-
-with st.spinner("正在加载赛道数据..."):
-    df_etf = load_all_etf_data(period_days=max(100, period_option + 30))
-
-if df_etf is not None and 'SPY' in df_etf.columns:
-    # 计算所有ETF的动能并排序
-    etf_momentum = []
-
-    for etf in SECTOR_ETF_STOCKS.keys():
-        if etf in df_etf.columns:
-            try:
-                etf_data = df_etf[etf].dropna()
-                spy_data = df_etf['SPY'].dropna()
-
-                if len(etf_data) >= period_option + 5 and len(spy_data) >= period_option + 5:
-                    # 对齐索引后计算相对强度
-                    common_index = etf_data.index.intersection(spy_data.index)
-                    if len(common_index) < period_option + 5:
+            # 3. 下半部分：成分股表现列表
+            stock_list = []
+            for s in info['stocks']:
+                if s in data.columns:
+                    try:
+                        # 计算周涨幅
+                        w_chg = (data[s].iloc[-1] / data[s].iloc[-5] - 1) * 100 if len(data) >= 5 else 0
+                        stock_list.append({
+                            "Ticker": s,
+                            "周涨幅%": round(w_chg, 2),
+                            "现价": round(data[s].iloc[-1], 2)
+                        })
+                    except:
                         continue
-
-                    etf_aligned = etf_data.loc[common_index]
-                    spy_aligned = spy_data.loc[common_index]
-
-                    # 计算相对强度
-                    rel_strength = etf_aligned / spy_aligned
-
-                    # 计算动能
-                    if len(rel_strength) >= period_option + 1:
-                        momentum = (rel_strength.iloc[-1] / rel_strength.iloc[-period_option - 1] - 1) * 100
-
-                        # 检查是否有NaN值
-                        if not pd.isna(momentum):
-                            etf_momentum.append({
-                                'etf': etf,
-                                'momentum': momentum
-                            })
-            except:
-                continue
-
-    # 获取Top 10
-    top10_etfs = sorted(etf_momentum, key=lambda x: x['momentum'], reverse=True)[:10]
-
-    if top10_etfs:
-        st.subheader(f"📊 Top 10 赛道 - {period_option}日动能排行")
-
-        # 显示Top 10动能对比图
-        etf_codes = [item['etf'] for item in top10_etfs]
-        momentums = [item['momentum'] for item in top10_etfs]
-        # 生成中文标签：ETF代码 + 中文名称
-        chinese_labels = [f"{code} {ETF_CHINESE_NAMES.get(code, '')}" for code in etf_codes]
-        colors = ['#00CC96' if x > 0 else '#EF553B' for x in momentums]
-
-        fig_top = go.Figure()
-        fig_top.add_trace(go.Bar(
-            x=momentums,
-            y=chinese_labels,
-            orientation='h',
-            marker_color=colors,
-            text=[f"{m:.2f}%" for m in momentums],
-            textposition='outside'
-        ))
-
-        fig_top.update_layout(
-            title=f"Top 10 赛道动能对比 ({period_option}日)",
-            xaxis_title="相对SPY动能 (%)",
-            yaxis_title="",
-            height=400,
-            template="plotly_white",
-            yaxis={'categoryorder':'total ascending'}
-        )
-
-        st.plotly_chart(fig_top, use_container_width=True)
-
-        st.divider()
-
-        # 为每个Top 10 ETF显示详细信息
-        st.subheader("🔍 赛道详细分析")
-
-        # 使用两列布局
-        cols = st.columns(2)
-
-        for idx, etf_info in enumerate(top10_etfs):
-            etf_code = etf_info['etf']
-            etf_momentum = etf_info['momentum']
-
-            with cols[idx % 2]:
-                with st.container(border=True):
-                    # 标题和动能 - 显示代码和中文名称
-                    chinese_name = ETF_CHINESE_NAMES.get(etf_code, "")
-                    st.markdown(f"### {etf_code} {chinese_name}")
-                    st.metric(f"{period_option}日动能", f"{etf_momentum:.2f}%")
-
-                    # 60日资金流向图
-                    if etf_code in df_etf.columns:
-                        try:
-                            rel_strength = df_etf[etf_code] / df_etf['SPY']
-                            flow_series = (rel_strength.pct_change(20) * 100).dropna().tail(60)
-
-                            if len(flow_series) > 0:
-                                fig_flow = go.Figure()
-                                fig_flow.add_trace(go.Bar(
-                                    x=flow_series.index,
-                                    y=flow_series,
-                                    marker_color=['#26a69a' if x > 0 else '#ef5350' for x in flow_series],
-                                    showlegend=False
-                                ))
-
-                                fig_flow.update_layout(
-                                    height=180,
-                                    margin=dict(l=0, r=0, t=10, b=0),
-                                    template="plotly_white",
-                                    xaxis_visible=False,
-                                    yaxis_title="资金流向(%)"
-                                )
-
-                                st.plotly_chart(fig_flow, use_container_width=True, config={'displayModeBar': False})
-                        except:
-                            pass
-
-                    st.markdown("**龙头股表现**")
-
-                    # 加载该ETF的成分股数据
-                    stock_list = SECTOR_ETF_STOCKS.get(etf_code, [])
-
-                    if stock_list:
-                        stock_df = load_stock_data(stock_list, period_days=60)
-
-                        if stock_df is not None:
-                            stock_performance = []
-
-                            for stock in stock_list:
-                                if stock in stock_df.columns:
-                                    try:
-                                        stock_data = stock_df[stock].dropna()
-
-                                        if len(stock_data) >= max(5, period_option):
-                                            price_change = (stock_data.iloc[-1] / stock_data.iloc[-period_option] - 1) * 100
-                                            current_price = stock_data.iloc[-1]
-
-                                            # 检查是否有NaN值
-                                            if not pd.isna(price_change) and not pd.isna(current_price):
-                                                stock_performance.append({
-                                                    "股票": stock,
-                                                    f"{period_option}日涨幅": round(price_change, 2),
-                                                    "现价": round(current_price, 2)
-                                                })
-                                    except:
-                                        continue
-
-                            if stock_performance:
-                                perf_df = pd.DataFrame(stock_performance).sort_values(f"{period_option}日涨幅", ascending=False)
-
-                                st.dataframe(
-                                    perf_df,
-                                    column_config={
-                                        f"{period_option}日涨幅": st.column_config.NumberColumn(
-                                            f"{period_option}日涨幅",
-                                            format="%.2f%%"
-                                        ),
-                                        "现价": st.column_config.NumberColumn("现价", format="$%.2f")
-                                    },
-                                    hide_index=True,
-                                    use_container_width=True,
-                                    height=200
-                                )
-                            else:
-                                st.info("暂无个股数据")
-                        else:
-                            st.info("暂无个股数据")
-                    else:
-                        st.info("暂无成分股定义")
-    else:
-        st.warning("暂无有效数据")
-else:
-    st.error("无法加载数据，请检查网络连接")
+            
+            if stock_list:
+                df_s = pd.DataFrame(stock_list).sort_values("周涨幅%", ascending=False)
+                
+                # 使用 dataframe 渲染，增加进度条颜色
+                st.dataframe(
+                    df_s,
+                    column_config={
+                        "周涨幅%": st.column_config.NumberColumn("周涨幅%", format="%.2f%%"),
+                        "现价": st.column_config.NumberColumn("现价", format="$%.2f")
+                    },
+                    hide_index=True,
+                    width='stretch'
+                )
