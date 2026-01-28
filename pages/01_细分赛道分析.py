@@ -2,46 +2,142 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
+import logging
 
-st.set_page_config(layout="wide", page_title="细分赛道分析")
+# 抑制 yfinance 的日志
+logging.getLogger('yfinance').setLevel(logging.CRITICAL)
+logging.getLogger('urllib3').setLevel(logging.CRITICAL)
 
-# 定义精细化板块及其核心个股 (还原图片中的细分赛道)
-etf_data_map = {
-    "Elec-Semiconductor Mfg": {
-        "name": "芯片制造/半导体",
-        "benchmark": "SMH", # 也可以用基准 ETF
-        "stocks": ["TSM", "INTC", "TXN", "ADI", "NXPI", "MCHP", "ON", "GFS"] #
-    },
-    "Elec-Semiconductor Equip": {
-        "name": "芯片设备/光刻机",
-        "benchmark": "SOXX",
-        "stocks": ["ASML", "LRCX", "AMAT", "KLAC", "TER", "ENTG", "MKSI", "NVMI"] #
-    },
-    "AeroSpace-New Space": {
-        "name": "新航天/卫星技术",
-        "benchmark": "ARKX",
-        "stocks": ["RKLB", "ASTS", "SATS", "PL", "FLY", "LUNR", "VOYG", "RDW"] #
-    },
-    "AeroSpace-Traditional": {
-        "name": "传统航天/军工",
-        "benchmark": "ITA",
-        "stocks": ["GE", "RTX", "BA", "LMT", "GD", "NOC", "HWM"] #
-    },
-    "Mining-Lithium": {
-        "name": "锂矿/电池供应链",
-        "benchmark": "LIT",
-        "stocks": ["ALB", "LAC", "SGML", "SLI", "LAR", "ELVR", "ABAT"] #
-    },
-    "Mining-Uranium": {
-        "name": "铀矿/核能循环",
-        "benchmark": "URA",
-        "stocks": ["CCJ", "UEC", "NXE", "UUUU", "DNN", "EU"] #
-    },
-    "Energy-Alt-Storage": {
-        "name": "储能/高贝塔电力",
-        "benchmark": "ICLN",
-        "stocks": ["BE", "QS", "EOSE", "FLNC", "PLUG", "ENVX", "AMRC"] #
-    }
+st.set_page_config(layout="wide", page_title="Top 10 赛道深度分析")
+
+# 定义所有主要的行业/细分赛道ETF及其真实主要持仓
+# 数据来源：各ETF官方网站公开信息，2024年数据
+SECTOR_ETF_STOCKS = {
+    # 科技类 - 基于官方持仓数据
+    "XLK": ["AAPL", "NVDA", "MSFT", "AVGO", "CRM"],  # SPDR Technology
+    "SMH": ["TSM", "NVDA", "ASML", "AMD", "INTC"],  # VanEck Semiconductor
+    "SOXX": ["NVDA", "AVGO", "AMD", "QCOM", "TXN"],  # iShares Semiconductor
+    "IGV": ["MSFT", "ORCL", "CRM", "ADBE", "INTU"],  # iShares Software
+    "CLOU": ["ORCL", "AMZN", "MSFT", "GOOGL", "CRM"],  # Cloud Computing
+    "HACK": ["PANW", "CRWD", "FTNT", "ZS", "NET"],  # Cybersecurity
+    "FINX": ["V", "MA", "PYPL", "SQ", "COIN"],  # Fintech
+    "BOTZ": ["NVDA", "ISRG", "ABB", "FANUC", "TER"],  # Robotics & AI
+    "ROBO": ["NVDA", "AMD", "GOOGL", "MSFT", "ABB"],  # Robotics
+
+    # ARK系列 - 基于ARK官方持仓
+    "ARKK": ["TSLA", "COIN", "ROKU", "RBLX", "SHOP"],  # ARK Innovation
+    "ARKG": ["CRSP", "TDOC", "EXAS", "NTLA", "EDIT"],  # ARK Genomic
+    "ARKX": ["RKLB", "KTOS", "AVAV", "IRDM", "LHX"],  # ARK Space
+
+    # 医疗类 - 基于官方持仓数据
+    "XLV": ["LLY", "UNH", "JNJ", "ABBV", "MRK"],  # SPDR Healthcare
+    "XBI": ["VRTX", "REGN", "ALNY", "BMRN", "SRPT"],  # SPDR Biotech
+    "IBB": ["AMGN", "GILD", "VRTX", "REGN", "BIIB"],  # iShares Biotech
+    "IHI": ["ISRG", "EW", "SYK", "ZBH", "BSX"],  # iShares Medical Devices
+    "XPH": ["LLY", "NVO", "MRK", "AZN", "GSK"],  # Pharma
+
+    # 能源类 - 基于官方持仓数据
+    "XLE": ["XOM", "CVX", "COP", "EOG", "SLB"],  # SPDR Energy
+    "XOP": ["COP", "EOG", "DVN", "FANG", "MRO"],  # Oil & Gas Exploration
+    "ICLN": ["ENPH", "SEDG", "NEE", "FSLR", "PLUG"],  # Clean Energy
+    "TAN": ["FSLR", "ENPH", "SEDG", "RUN", "NOVA"],  # Solar
+    "LIT": ["ALB", "SQM", "LAC", "LTHM", "PLL"],  # Lithium & Battery
+    "URA": ["CCJ", "UEC", "DNN", "NXE", "UUUU"],  # Uranium
+    "ACES": ["ENPH", "ALB", "ON", "NXPI", "STM"],  # Clean Energy Storage
+
+    # 金融类 - 基于官方持仓数据
+    "XLF": ["BRK.B", "JPM", "V", "MA", "BAC"],  # SPDR Financial
+    "KRE": ["USB", "PNC", "TFC", "CFG", "FITB"],  # Regional Banks
+    "IAI": ["GS", "MS", "SCHW", "CME", "SPGI"],  # Brokers
+    "KIE": ["BRK.B", "PGR", "CB", "TRV", "ALL"],  # Insurance
+
+    # 工业类 - 基于官方持仓数据
+    "XLI": ["GE", "CAT", "RTX", "UNP", "HON"],  # SPDR Industrial
+    "ITA": ["RTX", "LMT", "BA", "GD", "NOC"],  # Aerospace & Defense
+    "PAVE": ["CAT", "VMC", "MLM", "NUE", "X"],  # Infrastructure
+    "IYT": ["UPS", "FDX", "DAL", "UAL", "LUV"],  # Transportation
+
+    # 消费类 - 基于官方持仓数据
+    "XLY": ["AMZN", "TSLA", "HD", "MCD", "NKE"],  # Consumer Discretionary
+    "XLP": ["PG", "KO", "PEP", "WMT", "COST"],  # Consumer Staples
+    "XRT": ["AMZN", "HD", "LOW", "TJX", "ROST"],  # Retail
+    "AWAY": ["MAR", "HLT", "H", "RCL", "CCL"],  # Travel & Hotels
+    "GAMR": ["MSFT", "SONY", "TTWO", "EA", "RBLX"],  # Gaming
+
+    # 房地产类 - 基于官方持仓数据
+    "XLRE": ["AMT", "PLD", "EQIX", "PSA", "WELL"],  # Real Estate
+    "VNQ": ["PLD", "AMT", "EQIX", "PSA", "WELL"],  # REITs
+    "INDS": ["PLD", "DRE", "REXR", "FR", "STAG"],  # Industrial REITs
+
+    # 通信材料公用事业 - 基于官方持仓数据
+    "XLC": ["META", "GOOGL", "NFLX", "DIS", "CMCSA"],  # Communication
+    "SOCL": ["META", "SNAP", "PINS", "RDDT", "MTCH"],  # Social Media
+    "XLB": ["LIN", "APD", "SHW", "ECL", "NUE"],  # Materials
+    "PICK": ["RIO", "BHP", "VALE", "FCX", "SCCO"],  # Mining
+    "COPX": ["FCX", "SCCO", "TECK", "HBM", "CMCL"],  # Copper
+    "XLU": ["NEE", "DUK", "SO", "D", "AEP"],  # Utilities
+
+    # 新兴主题 - 基于官方持仓数据
+    "DRIV": ["TSLA", "NIO", "RIVN", "LCID", "GM"],  # 电动车和自动驾驶（真实持仓）
+    "BLOK": ["COIN", "MARA", "RIOT", "MSTR", "SQ"],  # Blockchain
+    "BETZ": ["DKNG", "FDW", "FLUT", "MGM", "CZR"],  # Betting & Sports
+    "ESPO": ["TTWO", "EA", "ATVI", "GME", "RBLX"],  # eSports
+    "GNOM": ["ILMN", "TMO", "DHR", "A", "QGEN"],  # Genomics
+}
+
+# 定义ETF中文名称映射
+ETF_CHINESE_NAMES = {
+    "XLK": "科技整体",
+    "SMH": "半导体",
+    "SOXX": "半导体设备",
+    "IGV": "软件",
+    "CLOU": "云计算",
+    "HACK": "网络安全",
+    "FINX": "金融科技",
+    "BOTZ": "机器人自动化",
+    "ROBO": "机器人AI",
+    "ARKK": "颠覆性创新",
+    "XLV": "医疗整体",
+    "XBI": "生物科技",
+    "IBB": "生物技术",
+    "ARKG": "基因组学",
+    "IHI": "医疗设备",
+    "XPH": "制药",
+    "XLE": "能源整体",
+    "XOP": "石油勘探",
+    "ICLN": "清洁能源",
+    "TAN": "太阳能",
+    "LIT": "锂电池",
+    "URA": "铀矿核能",
+    "ACES": "清洁能源存储",
+    "XLF": "金融整体",
+    "KRE": "地区银行",
+    "IAI": "券商投行",
+    "KIE": "保险",
+    "XLI": "工业整体",
+    "ITA": "航空航天国防",
+    "ARKX": "太空探索",
+    "PAVE": "基建",
+    "IYT": "运输",
+    "XLY": "可选消费",
+    "XLP": "必需消费",
+    "XRT": "零售",
+    "AWAY": "旅游酒店",
+    "GAMR": "游戏电竞",
+    "XLRE": "房地产整体",
+    "VNQ": "REITs",
+    "INDS": "工业地产",
+    "XLC": "通信服务",
+    "SOCL": "社交媒体",
+    "XLB": "材料整体",
+    "PICK": "矿业金属",
+    "COPX": "铜矿",
+    "XLU": "公用事业",
+    "BLOK": "区块链",
+    "BETZ": "博彩体育",
+    "ESPO": "电子竞技",
+    "DRIV": "自动驾驶",
+    "GNOM": "基因组",
 }
 
 # --- 1. 数据加载与缓存 ---

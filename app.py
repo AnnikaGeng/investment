@@ -26,7 +26,7 @@ etf_info = {
     "ARKX": {"name": "航天太空 (Space)", "stocks": ["RKLB", "LMT", "AVAV", "IRDM", "NOC", "RTX", "VSAT", "SPCE", "AXL", "MAXR"]}
 }
 
-st.title("📊 全球板块资金流向全景图 (按强度排序)")
+st.title("📊 全球板块资金流向图")
 st.markdown("计算说明：显示各板块相对于 SPY 的 20 日动能变化 (Capital Rotation Rel) + 成分股表现分析")
 st.caption(f"📊 数据最后更新：{pd.Timestamp.now().strftime('%Y年%m月%d日 %H:%M:%S')} (当天缓存，同日内无需重新加载)")
 
@@ -38,59 +38,112 @@ if 'selected_etf' not in st.session_state:
 # 2. 获取数据
 benchmark = "SPY"
 tickers = list(etf_info.keys()) + [benchmark]
-# 收集所有成分股用于分析
-all_stocks = []
-for info in etf_info.values():
-    all_stocks.extend(info['stocks'])
-all_stocks = list(set(all_stocks))  # 去重
 
 @st.cache_data(ttl=86400) # 缓存24小时（当天）
-def load_data(ticker_list, stock_list):
-    data = yf.download(ticker_list + stock_list, period="1y")['Close']
+def load_data(ticker_list):
+    data = yf.download(ticker_list, period="1y", progress=False)['Close']
     return data
 
 try:
-    df = load_data(tickers, all_stocks)
+    df = load_data(tickers)
     
     # 3. 计算排名与位次变动（带缓存）
     @st.cache_data(ttl=86400)
     def calculate_rankings(df_data):
         rotation_results = []
         for ticker in etf_info.keys():
-            # 相对强弱逻辑：(ETF / SPY) 的 20 日变化率
-            rel_strength = df_data[ticker] / df_data[benchmark]
-            rotation_series = (rel_strength.pct_change(20) * 100).dropna()
-            latest_val = rotation_series.iloc[-1]
-            
-            rotation_results.append({
-                "ticker": ticker,
-                "latest_val": latest_val,
-                "series": rotation_series
-            })
-        
+            if ticker not in df_data.columns or benchmark not in df_data.columns:
+                continue
+
+            try:
+                # 对齐索引后计算相对强度
+                ticker_data = df_data[ticker].dropna()
+                spy_data = df_data[benchmark].dropna()
+
+                # 确保有足够数据
+                if len(ticker_data) < 25 or len(spy_data) < 25:
+                    continue
+
+                common_index = ticker_data.index.intersection(spy_data.index)
+                if len(common_index) < 25:
+                    continue
+
+                ticker_aligned = ticker_data.loc[common_index]
+                spy_aligned = spy_data.loc[common_index]
+
+                # 相对强弱逻辑：(ETF / SPY) 的 20 日变化率
+                rel_strength = ticker_aligned / spy_aligned
+                rotation_series = (rel_strength.pct_change(20, fill_method=None) * 100).dropna()
+
+                if len(rotation_series) == 0:
+                    continue
+
+                latest_val = rotation_series.iloc[-1]
+
+                if pd.isna(latest_val):
+                    continue
+
+                rotation_results.append({
+                    "ticker": ticker,
+                    "latest_val": latest_val,
+                    "series": rotation_series
+                })
+            except Exception as e:
+                continue
+
+        if not rotation_results:
+            return [], {}, {}
+
         # 执行排序：按最新数值从大到小排列
         sorted_results = sorted(rotation_results, key=lambda x: x['latest_val'], reverse=True)
-        
+
         # 计算排名变动（今日 vs 昨日）
         current_ranks = {item['ticker']: i + 1 for i, item in enumerate(sorted_results)}
         yesterday_results = []
-        
+
         for ticker in etf_info.keys():
-            rel_strength = df_data[ticker] / df_data[benchmark]
-            rotation_series = (rel_strength.pct_change(20) * 100).dropna()
-            # 取前一天的值
-            if len(rotation_series) >= 2:
-                yesterday_val = rotation_series.iloc[-2]
-            else:
-                yesterday_val = rotation_series.iloc[-1]
-            yesterday_results.append({
-                "ticker": ticker,
-                "val": yesterday_val
-            })
-        
+            if ticker not in df_data.columns or benchmark not in df_data.columns:
+                continue
+
+            try:
+                ticker_data = df_data[ticker].dropna()
+                spy_data = df_data[benchmark].dropna()
+
+                if len(ticker_data) < 25 or len(spy_data) < 25:
+                    continue
+
+                common_index = ticker_data.index.intersection(spy_data.index)
+                if len(common_index) < 25:
+                    continue
+
+                ticker_aligned = ticker_data.loc[common_index]
+                spy_aligned = spy_data.loc[common_index]
+
+                rel_strength = ticker_aligned / spy_aligned
+                rotation_series = (rel_strength.pct_change(20, fill_method=None) * 100).dropna()
+
+                if len(rotation_series) == 0:
+                    continue
+
+                # 取前一天的值
+                if len(rotation_series) >= 2:
+                    yesterday_val = rotation_series.iloc[-2]
+                else:
+                    yesterday_val = rotation_series.iloc[-1]
+
+                if pd.isna(yesterday_val):
+                    continue
+
+                yesterday_results.append({
+                    "ticker": ticker,
+                    "val": yesterday_val
+                })
+            except Exception as e:
+                continue
+
         yesterday_sorted = sorted(yesterday_results, key=lambda x: x['val'], reverse=True)
         yesterday_ranks = {item['ticker']: i + 1 for i, item in enumerate(yesterday_sorted)}
-        
+
         return sorted_results, current_ranks, yesterday_ranks
     
     sorted_results, current_rank_map, yesterday_rank_map = calculate_rankings(df)
