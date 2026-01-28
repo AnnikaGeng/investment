@@ -414,6 +414,13 @@ if df_sectors is not None and 'SPY' in df_sectors.columns:
     sector_momentum.sort(key=lambda x: x['momentum'], reverse=True)
     top5_sectors = sector_momentum[:5]
 
+    # 调试：显示计算到的赛道数量
+    st.write(f"🔍 计算到 {len(sector_momentum)} 个赛道，选取前5个")
+
+    if not top5_sectors:
+        st.error("❌ 未能计算出热门赛道，请稍后重试")
+        st.stop()
+
     st.subheader("🔥 Top 5 热门赛道")
 
     cols = st.columns(5)
@@ -424,6 +431,15 @@ if df_sectors is not None and 'SPY' in df_sectors.columns:
                 f"{sector['momentum']:.2f}%",
                 delta=sector['etf']
             )
+
+    # Debug: 显示哪些ETF有持仓数据
+    etfs_with_holdings = [s['etf'] for s in top5_sectors if s['etf'] in ETF_HOLDINGS]
+    etfs_without_holdings = [s['etf'] for s in top5_sectors if s['etf'] not in ETF_HOLDINGS]
+
+    if etfs_without_holdings:
+        st.info(f"⚠️ 以下ETF暂无成分股数据: {', '.join(etfs_without_holdings)}")
+    if etfs_with_holdings:
+        st.success(f"✅ 有成分股数据的ETF: {', '.join(etfs_with_holdings)}")
 
     st.divider()
 
@@ -436,8 +452,23 @@ if df_sectors is not None and 'SPY' in df_sectors.columns:
 
     all_stocks = list(all_stocks)
 
+    # 详细调试信息
+    st.write(f"🔍 调试: 收集到 {len(all_stocks)} 支候选股票")
+    if len(all_stocks) > 0:
+        st.write(f"🔍 前10支股票: {all_stocks[:10]}")
+
     if not all_stocks:
-        st.warning("未找到热门赛道的成分股数据，请稍后重试")
+        st.error("❌ 未找到热门赛道的成分股数据")
+        st.write("详细信息:")
+        st.write(f"- Top 5 赛道数量: {len(top5_sectors)}")
+        st.write(f"- Top 5 ETF代码: {[s['etf'] for s in top5_sectors]}")
+        st.write(f"- ETF_HOLDINGS 包含的ETF数量: {len(ETF_HOLDINGS)}")
+
+        # 检查每个Top5 ETF是否在holdings中
+        for sector in top5_sectors:
+            etf = sector['etf']
+            has_data = etf in ETF_HOLDINGS
+            st.write(f"  - {etf} ({sector['name']}): {'✅ 有数据' if has_data else '❌ 无数据'}")
     else:
         st.subheader(f"📊 正在分析 {len(all_stocks)} 支候选股票...")
 
