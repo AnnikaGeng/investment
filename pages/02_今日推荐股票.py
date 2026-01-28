@@ -436,159 +436,162 @@ if df_sectors is not None and 'SPY' in df_sectors.columns:
 
     all_stocks = list(all_stocks)
 
-    st.subheader(f"📊 正在分析 {len(all_stocks)} 支候选股票...")
-
-    # 加载股票数据
-    with st.spinner("加载股票数据..."):
-        stock_data = load_stock_data(all_stocks, period="6mo")
-
-    if stock_data is not None:
-        # 分析每支股票
-        stock_scores = []
-
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-
-        for idx, ticker in enumerate(all_stocks):
-            try:
-                status_text.text(f"分析中: {ticker} ({idx+1}/{len(all_stocks)})")
-
-                # 热门赛道得分 (30分)
-                sector_score = 0
-                in_sectors = []
-                for sector in top5_sectors:
-                    if sector['etf'] in ETF_HOLDINGS and ticker in ETF_HOLDINGS[sector['etf']]:
-                        in_sectors.append(sector['name'])
-
-                if len(in_sectors) >= 3:
-                    sector_score = 30
-                elif len(in_sectors) == 2:
-                    sector_score = 20
-                elif len(in_sectors) == 1:
-                    sector_score = 10
-
-                # 均线分析 (50分)
-                ma_score, ma_signal = calculate_moving_average_score(stock_data, ticker)
-
-                # 价格行为 (50分)
-                price_score, price_signal = calculate_price_action_score(stock_data, ticker)
-
-                # 基本面 (30分)
-                fundamental_score, fundamental_signal = calculate_fundamental_score(ticker)
-
-                # 总分
-                total_score = sector_score + ma_score + price_score + fundamental_score
-
-                if total_score > 0:
-                    stock_scores.append({
-                        '股票代码': ticker,
-                        '总分': total_score,
-                        '热门赛道': sector_score,
-                        '赛道': ", ".join(in_sectors[:2]) if in_sectors else "-",
-                        '均线分析': ma_score,
-                        '均线信号': ma_signal,
-                        '价格行为': price_score,
-                        '行为信号': price_signal,
-                        '基本面': fundamental_score,
-                        '基本面信号': fundamental_signal
-                    })
-
-                progress_bar.progress((idx + 1) / len(all_stocks))
-            except Exception as e:
-                continue
-
-        progress_bar.empty()
-        status_text.empty()
-
-        if stock_scores:
-            # 排序
-            stock_scores.sort(key=lambda x: x['总分'], reverse=True)
-            top3_stocks = stock_scores[:3]
-
-            st.success(f"✅ 分析完成！从 {len(all_stocks)} 支候选股票中筛选出 Top 3")
-
-            st.divider()
-
-            # 显示Top 3推荐
-            st.subheader("🏆 今日推荐 Top 3 股票")
-
-            for rank, stock in enumerate(top3_stocks, 1):
-                with st.container():
-                    st.markdown(f"### {rank}. {stock['股票代码']} - 综合评分: {stock['总分']}/160")
-
-                    col1, col2, col3, col4 = st.columns(4)
-
-                    with col1:
-                        st.metric("热门赛道", f"{stock['热门赛道']}/30")
-                        st.caption(stock['赛道'])
-
-                    with col2:
-                        st.metric("均线分析", f"{stock['均线分析']}/50")
-                        st.caption(stock['均线信号'])
-
-                    with col3:
-                        st.metric("价格行为", f"{stock['价格行为']}/50")
-                        st.caption(stock['行为信号'])
-
-                    with col4:
-                        st.metric("基本面", f"{stock['基本面']}/30")
-                        st.caption(stock['基本面信号'])
-
-                    st.divider()
-
-            # 显示完整排行榜
-            with st.expander("📋 查看完整排行榜"):
-                df_scores = pd.DataFrame(stock_scores)
-                st.dataframe(
-                    df_scores,
-                    column_config={
-                        "股票代码": st.column_config.TextColumn("股票代码", width="small"),
-                        "总分": st.column_config.ProgressColumn("总分", format="%d/160", min_value=0, max_value=160),
-                        "热门赛道": st.column_config.ProgressColumn("热门赛道", format="%d/30", min_value=0, max_value=30),
-                        "赛道": st.column_config.TextColumn("赛道", width="medium"),
-                        "均线分析": st.column_config.ProgressColumn("均线", format="%d/50", min_value=0, max_value=50),
-                        "均线信号": st.column_config.TextColumn("均线信号", width="medium"),
-                        "价格行为": st.column_config.ProgressColumn("价格", format="%d/50", min_value=0, max_value=50),
-                        "行为信号": st.column_config.TextColumn("行为信号", width="medium"),
-                        "基本面": st.column_config.ProgressColumn("基本面", format="%d/30", min_value=0, max_value=30),
-                        "基本面信号": st.column_config.TextColumn("基本面信号", width="medium")
-                    },
-                    hide_index=True,
-                    use_container_width=True,
-                    height=600
-                )
-
-            # 评分说明
-            with st.expander("📖 评分规则说明"):
-                st.markdown("""
-                **总分: 160分**
-
-                1. **热门赛道 (30分)**
-                   - 出现在3个以上Top5赛道: 30分
-                   - 出现在2个Top5赛道: 20分
-                   - 出现在1个Top5赛道: 10分
-
-                2. **均线分析 (50分)**
-                   - 价格在所有均线上方 (多头排列): 30分
-                   - 均线多头排列 (MA30 > MA50 > MA100): 20分
-                   - 部分满足条件: 10-20分
-
-                3. **价格行为 (50分)**
-                   - 20日动能 (>10%: 25分, >5%: 15分, >0%: 5分)
-                   - 相对强度位置 (60日内位置 >80%: 15分)
-                   - 成交量放大确认: 10分
-
-                4. **基本面 (30分)**
-                   - PE估值合理 (Forward PE <15: 15分, <25: 10分)
-                   - 盈利增长 >20%: 5分
-                   - 营收增长 >15%: 5分
-                   - 分析师推荐买入: 5分
-
-                **注意**: 本推荐仅供参考，投资有风险，请谨慎决策。
-                """)
-        else:
-            st.warning("未找到符合条件的股票")
+    if not all_stocks:
+        st.warning("未找到热门赛道的成分股数据，请稍后重试")
     else:
-        st.error("无法加载股票数据")
+        st.subheader(f"📊 正在分析 {len(all_stocks)} 支候选股票...")
+
+        # 加载股票数据 - 使用1年数据支持MA100计算
+        with st.spinner("加载股票数据..."):
+            stock_data = load_stock_data(all_stocks, period="1y")
+
+        if stock_data is not None:
+            # 分析每支股票
+            stock_scores = []
+
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+
+            for idx, ticker in enumerate(all_stocks):
+                try:
+                    status_text.text(f"分析中: {ticker} ({idx+1}/{len(all_stocks)})")
+
+                    # 热门赛道得分 (30分)
+                    sector_score = 0
+                    in_sectors = []
+                    for sector in top5_sectors:
+                        if sector['etf'] in ETF_HOLDINGS and ticker in ETF_HOLDINGS[sector['etf']]:
+                            in_sectors.append(sector['name'])
+
+                    if len(in_sectors) >= 3:
+                        sector_score = 30
+                    elif len(in_sectors) == 2:
+                        sector_score = 20
+                    elif len(in_sectors) == 1:
+                        sector_score = 10
+
+                    # 均线分析 (50分)
+                    ma_score, ma_signal = calculate_moving_average_score(stock_data, ticker)
+
+                    # 价格行为 (50分)
+                    price_score, price_signal = calculate_price_action_score(stock_data, ticker)
+
+                    # 基本面 (30分)
+                    fundamental_score, fundamental_signal = calculate_fundamental_score(ticker)
+
+                    # 总分
+                    total_score = sector_score + ma_score + price_score + fundamental_score
+
+                    if total_score > 0:
+                        stock_scores.append({
+                            '股票代码': ticker,
+                            '总分': total_score,
+                            '热门赛道': sector_score,
+                            '赛道': ", ".join(in_sectors[:2]) if in_sectors else "-",
+                            '均线分析': ma_score,
+                            '均线信号': ma_signal,
+                            '价格行为': price_score,
+                            '行为信号': price_signal,
+                            '基本面': fundamental_score,
+                            '基本面信号': fundamental_signal
+                        })
+
+                    progress_bar.progress((idx + 1) / len(all_stocks))
+                except Exception as e:
+                    continue
+
+            progress_bar.empty()
+            status_text.empty()
+
+            if stock_scores:
+                # 排序
+                stock_scores.sort(key=lambda x: x['总分'], reverse=True)
+                top3_stocks = stock_scores[:3]
+
+                st.success(f"✅ 分析完成！从 {len(all_stocks)} 支候选股票中筛选出 Top 3")
+
+                st.divider()
+
+                # 显示Top 3推荐
+                st.subheader("🏆 今日推荐 Top 3 股票")
+
+                for rank, stock in enumerate(top3_stocks, 1):
+                    with st.container():
+                        st.markdown(f"### {rank}. {stock['股票代码']} - 综合评分: {stock['总分']}/160")
+
+                        col1, col2, col3, col4 = st.columns(4)
+
+                        with col1:
+                            st.metric("热门赛道", f"{stock['热门赛道']}/30")
+                            st.caption(stock['赛道'])
+
+                        with col2:
+                            st.metric("均线分析", f"{stock['均线分析']}/50")
+                            st.caption(stock['均线信号'])
+
+                        with col3:
+                            st.metric("价格行为", f"{stock['价格行为']}/50")
+                            st.caption(stock['行为信号'])
+
+                        with col4:
+                            st.metric("基本面", f"{stock['基本面']}/30")
+                            st.caption(stock['基本面信号'])
+
+                        st.divider()
+
+                # 显示完整排行榜
+                with st.expander("📋 查看完整排行榜"):
+                    df_scores = pd.DataFrame(stock_scores)
+                    st.dataframe(
+                        df_scores,
+                        column_config={
+                            "股票代码": st.column_config.TextColumn("股票代码", width="small"),
+                            "总分": st.column_config.ProgressColumn("总分", format="%d/160", min_value=0, max_value=160),
+                            "热门赛道": st.column_config.ProgressColumn("热门赛道", format="%d/30", min_value=0, max_value=30),
+                            "赛道": st.column_config.TextColumn("赛道", width="medium"),
+                            "均线分析": st.column_config.ProgressColumn("均线", format="%d/50", min_value=0, max_value=50),
+                            "均线信号": st.column_config.TextColumn("均线信号", width="medium"),
+                            "价格行为": st.column_config.ProgressColumn("价格", format="%d/50", min_value=0, max_value=50),
+                            "行为信号": st.column_config.TextColumn("行为信号", width="medium"),
+                            "基本面": st.column_config.ProgressColumn("基本面", format="%d/30", min_value=0, max_value=30),
+                            "基本面信号": st.column_config.TextColumn("基本面信号", width="medium")
+                        },
+                        hide_index=True,
+                        use_container_width=True,
+                        height=600
+                    )
+
+                # 评分说明
+                with st.expander("📖 评分规则说明"):
+                    st.markdown("""
+                    **总分: 160分**
+
+                    1. **热门赛道 (30分)**
+                       - 出现在3个以上Top5赛道: 30分
+                       - 出现在2个Top5赛道: 20分
+                       - 出现在1个Top5赛道: 10分
+
+                    2. **均线分析 (50分)**
+                       - 价格在所有均线上方 (多头排列): 30分
+                       - 均线多头排列 (MA30 > MA50 > MA100): 20分
+                       - 部分满足条件: 10-20分
+
+                    3. **价格行为 (50分)**
+                       - 20日动能 (>10%: 25分, >5%: 15分, >0%: 5分)
+                       - 相对强度位置 (60日内位置 >80%: 15分)
+                       - 成交量放大确认: 10分
+
+                    4. **基本面 (30分)**
+                       - PE估值合理 (Forward PE <15: 15分, <25: 10分)
+                       - 盈利增长 >20%: 5分
+                       - 营收增长 >15%: 5分
+                       - 分析师推荐买入: 5分
+
+                    **注意**: 本推荐仅供参考，投资有风险，请谨慎决策。
+                    """)
+            else:
+                st.warning("未找到符合条件的股票")
+        else:
+            st.error("无法加载股票数据")
 else:
     st.error("无法加载赛道数据，请检查网络连接")
