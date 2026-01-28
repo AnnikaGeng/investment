@@ -147,8 +147,8 @@ def get_market_data(tickers):
     return yf.download(tickers, period="60d")['Close']
 
 # 获取所有需要的代码
-all_stocks = [s for info in etf_data_map.values() for s in info['stocks']]
-all_benchmarks = [info['benchmark'] for info in etf_data_map.values()]
+all_stocks = [s for stocks in SECTOR_ETF_STOCKS.values() for s in stocks]
+all_benchmarks = list(SECTOR_ETF_STOCKS.keys())
 spy_benchmark = ["SPY"]
 data = get_market_data(list(set(all_stocks + all_benchmarks + spy_benchmark)))
 
@@ -156,11 +156,11 @@ data = get_market_data(list(set(all_stocks + all_benchmarks + spy_benchmark)))
 def get_daily_rankings(day_offset):
     # 计算某一天的板块相对强度排名
     ranks = []
-    for key, info in etf_data_map.items():
+    for etf_code in SECTOR_ETF_STOCKS.keys():
         # 相对 SPY 的 20 日动能
-        bm = info['benchmark']
-        rel_strength = data[bm].iloc[day_offset] / data[bm].iloc[day_offset - 20]
-        ranks.append({"key": key, "val": (rel_strength - 1) * 100})
+        if etf_code in data.columns:
+            rel_strength = data[etf_code].iloc[day_offset] / data[etf_code].iloc[day_offset - 20]
+            ranks.append({"key": etf_code, "val": (rel_strength - 1) * 100})
     
     # 排序
     sorted_list = sorted(ranks, key=lambda x: x['val'], reverse=True)
@@ -178,22 +178,22 @@ cols = st.columns(2) # 细分赛道较多，用 2 列排列更清晰
 
 for i, item in enumerate(curr_list):
     key = item['key']
-    info = etf_data_map[key]
+    etf_name = ETF_CHINESE_NAMES.get(key, key)
     val = item['val']
-    
+
     # 计算排名升降
     rank_diff = yest_rank_map[key] - curr_rank_map[key]
     diff_icon = f"🚀 +{rank_diff}" if rank_diff > 0 else (f"🔻 {rank_diff}" if rank_diff < 0 else "➖")
-    
+
     with cols[i % 2]:
         with st.container(border=True):
             # 头部信息
-            st.subheader(f"{info['name']} ({key})")
+            st.subheader(f"{etf_name} ({key})")
             st.write(f"排名：第 **{curr_rank_map[key]}** 名 ({diff_icon}) | 强度：{val:.2f}%")
-            
+
             # 个股分析表格
             stock_data = []
-            for stock in info['stocks']:
+            for stock in SECTOR_ETF_STOCKS.get(key, []):
                 if stock in data.columns:
                     week_change = (data[stock].iloc[-1] / data[stock].iloc[-5] - 1) * 100 if len(data) >= 5 else 0
                     stock_data.append({
@@ -203,11 +203,10 @@ for i, item in enumerate(curr_list):
                     })
             
             st.divider()
-            
+
             # 计算该板块的资金流向 (相对强度)
-            bm = info['benchmark']
-            if bm in data.columns and "SPY" in data.columns:
-                rel_strength = data[bm] / data["SPY"]
+            if key in data.columns and "SPY" in data.columns:
+                rel_strength = data[key] / data["SPY"]
                 rotation_series = (rel_strength.pct_change(20) * 100).dropna().tail(60)
             else:
                 rotation_series = None
@@ -240,7 +239,7 @@ for i, item in enumerate(curr_list):
 
             # 3. 下半部分：成分股表现列表
             stock_list = []
-            for s in info['stocks']:
+            for s in SECTOR_ETF_STOCKS.get(key, []):
                 if s in data.columns:
                     try:
                         # 计算周涨幅
