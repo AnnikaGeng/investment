@@ -140,7 +140,7 @@ for i, item in enumerate(curr_list):
                     template="plotly_white",
                     xaxis_visible=False # 隐藏 X 轴保持紧凑
                 )
-                st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+                st.plotly_chart(fig, width='stretch', config={'displayModeBar': False})
 
             # 3. 下半部分：成分股表现列表
             stock_list = []
@@ -168,5 +168,5 @@ for i, item in enumerate(curr_list):
                         "现价": st.column_config.NumberColumn("现价", format="$%.2f")
                     },
                     hide_index=True,
-                    use_container_width=True
+                    width='stretch'
                 )
